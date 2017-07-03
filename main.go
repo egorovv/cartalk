@@ -12,8 +12,8 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 
-	//id3 "github.com/mikkyang/id3-go"
-	id3 "github.com/bogem/id3v2"
+	id3 "github.com/mikkyang/id3-go"
+	//id3 "github.com/bogem/id3v2"
 )
 
 func getAttr(n *html.Node, attr string) string {
@@ -92,6 +92,19 @@ func Articles(url string) (articles []*Info) {
 	return
 }
 
+type Progress struct {
+	total int64
+	len   int64
+	src   io.Reader
+}
+
+func (p *Progress) Read(b []byte) (n int, err error) {
+	n, err = p.src.Read(b)
+	p.len += int64(n)
+	fmt.Printf("\r%d :%d%%", p.len, 100*p.len/p.total)
+	return
+}
+
 func downloadFile(filepath string, url string) (err error) {
 
 	// Create the file
@@ -108,12 +121,17 @@ func downloadFile(filepath string, url string) (err error) {
 	}
 	defer resp.Body.Close()
 
+	p := Progress{
+		total: resp.ContentLength,
+		src:   resp.Body,
+	}
+
 	// Writer the body to file
-	_, err = io.Copy(out, resp.Body)
+	_, err = io.Copy(out, &p)
 	if err != nil {
 		return err
 	}
-
+	fmt.Printf("\n")
 	return nil
 }
 
@@ -132,7 +150,7 @@ func main() {
 	url := "http://www.npr.org/podcasts/" + args.Podcast
 
 	a := Articles(url)
-	for {
+	for len(a) < args.Count {
 		suffix := fmt.Sprintf("/partials?start=%d", len(a)+1)
 		u := url + suffix
 		x := Articles(u)
@@ -140,11 +158,9 @@ func main() {
 			break
 		}
 		a = append(a, x...)
-		if len(a) > args.Count {
-			break
-		}
 	}
 
+	a = a[0:args.Count]
 	r, err := regexp.Compile("#[1234567890]+")
 	if err != nil {
 		fmt.Printf("%s\n", err)
@@ -155,16 +171,16 @@ func main() {
 		episod := r.FindString(i.Title)
 
 		fmt.Printf("%s : %s : %s : %s\n", episod, id, i.Title, i.Date)
+		if episod != "" {
+			episod = strings.TrimPrefix(episod, "#")
+		} else {
+			episod = id
+		}
 
-		downloadFile(id+".mp3", i.Url)
-		tag, err := id3.Open(id+".mp3", id3.Options{Parse: true})
+		fn := episod + ".mp3"
+		downloadFile(fn, i.Url)
 
-		tag.AddCommentFrame(id3.CommentFrame{
-			Encoding:    id3.ENUTF8,
-			Language:    "eng",
-			Description: "Description",
-			Text:        i.Teaser,
-		})
+		tag, err := id3.Open(fn)
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			continue
@@ -172,9 +188,5 @@ func main() {
 		defer tag.Close()
 		tag.SetArtist("Car Talk")
 		tag.SetTitle(i.Title)
-		err = tag.Save()
-		if err != nil {
-			fmt.Printf("%s\n", err)
-		}
 	}
 }
