@@ -93,6 +93,7 @@ func Articles(url string) (articles []*Info) {
 }
 
 type Progress struct {
+	name  string
 	total int64
 	len   int64
 	src   io.Reader
@@ -101,7 +102,7 @@ type Progress struct {
 func (p *Progress) Read(b []byte) (n int, err error) {
 	n, err = p.src.Read(b)
 	p.len += int64(n)
-	fmt.Printf("\r%d :%d%%", p.len, 100*p.len/p.total)
+	fmt.Printf("\r%s %d :%d%%", p.name, p.len, 100*p.len/p.total)
 	return
 }
 
@@ -122,6 +123,7 @@ func downloadFile(filepath string, url string) (err error) {
 	defer resp.Body.Close()
 
 	p := Progress{
+		name:  filepath,
 		total: resp.ContentLength,
 		src:   resp.Body,
 	}
@@ -169,15 +171,18 @@ func main() {
 	for _, i := range a {
 		id := strings.TrimPrefix(i.Id, "res")
 		episod := r.FindString(i.Title)
+		i.Title = strings.Replace(i.Title, episod, "", -1)
+		i.Title = strings.Trim(i.Title, ": ")
+		i.Title = strings.Replace(i.Title, "  ", " ", -1)
 
-		fmt.Printf("%s : %s : %s : %s\n", episod, id, i.Title, i.Date)
 		if episod != "" {
 			episod = strings.TrimPrefix(episod, "#")
 		} else {
 			episod = id
 		}
 
-		fn := episod + ".mp3"
+		fn := episod + "-" + strings.Replace(i.Title, " ", "_", -1) + ".mp3"
+
 		downloadFile(fn, i.Url)
 
 		tag, err := id3.Open(fn)
