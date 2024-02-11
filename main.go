@@ -8,11 +8,10 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
-
-	id3 "github.com/mikkyang/id3-go"
 	//id3 "github.com/bogem/id3v2"
 )
 
@@ -47,7 +46,12 @@ func walk(n *html.Node, info *Info) (articles []*Info) {
 		articles = append(articles, info)
 		//}
 	} else if info != nil && isClass(n.Parent, "date") && isClass(n.Parent.Parent.Parent, "episode-date") {
-		info.Date = n.Data
+		t, err := time.Parse("January 2, 2006", n.Data)
+		if err == nil {
+			info.Date = t.Format("2006-01-02")
+		} else {
+			info.Date = n.Data
+		}
 	} else if info != nil && isClass(n.Parent, "teaser") {
 		info.Teaser = n.Data
 	} else if info != nil && n.Type == html.ElementNode && n.DataAtom == atom.Article {
@@ -109,7 +113,8 @@ func (p *Progress) Read(b []byte) (n int, err error) {
 func downloadFile(filepath string, url string) (err error) {
 
 	// Create the file
-	out, err := os.Create(filepath)
+	part := filepath + ".part"
+	out, err := os.Create(part)
 	if err != nil {
 		return err
 	}
@@ -133,7 +138,9 @@ func downloadFile(filepath string, url string) (err error) {
 	if err != nil {
 		return err
 	}
+
 	fmt.Printf("\n")
+	os.Rename(part, filepath)
 	return nil
 }
 
@@ -142,23 +149,32 @@ func main() {
 	args := struct {
 		Podcast string
 		Count   int
+		Skip    int
 	}{}
 
 	flag.IntVar(&args.Count, "count", 20, "")
+	flag.IntVar(&args.Skip, "skip", 0, "")
 	flag.StringVar(&args.Podcast, "podcast", "510208/car-talk", "")
 
 	flag.Parse()
 
-	url := "http://www.npr.org/podcasts/" + args.Podcast
+	url := "http://www.npr.org"
 
-	a := Articles(url)
+	pos := args.Skip
+	a := []*Info{}
 	for len(a) < args.Count {
-		suffix := fmt.Sprintf("/partials?start=%d", len(a)+1)
+		suffix := fmt.Sprintf("/get/%s/render/partial/next?start=%d", args.Podcast, pos+1)
+		if pos == 0 {
+			suffix = "/podcasts/" + args.Podcast
+		}
 		u := url + suffix
 		x := Articles(u)
+		pos = pos + len(x)
 		if len(x) == 0 {
+			fmt.Printf("out of episodes\n")
 			break
 		}
+
 		a = append(a, x...)
 	}
 
@@ -174,6 +190,9 @@ func main() {
 		i.Title = strings.Replace(i.Title, episod, "", -1)
 		i.Title = strings.Trim(i.Title, ": ")
 		i.Title = strings.Replace(i.Title, "  ", " ", -1)
+		i.Title = strings.Replace(i.Title, " ", "_", -1)
+		i.Title = strings.Replace(i.Title, ",", "", -1)
+		i.Title = strings.Replace(i.Title, ".", "", -1)
 
 		if episod != "" {
 			episod = strings.TrimPrefix(episod, "#")
@@ -181,17 +200,24 @@ func main() {
 			episod = id
 		}
 
-		fn := episod + "-" + strings.Replace(i.Title, " ", "_", -1) + ".mp3"
+		fn := i.Date + "-" + episod + "-" + i.Title + ".mp3"
+
+		_, err = os.Stat(fn)
+		if err == nil {
+			continue
+		}
 
 		downloadFile(fn, i.Url)
 
-		tag, err := id3.Open(fn)
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			continue
-		}
-		defer tag.Close()
-		tag.SetArtist("Car Talk")
-		tag.SetTitle(i.Title)
+		/*
+			tag, err := id3.Open(fn)
+			if err != nil {
+				fmt.Printf("%s\n", err)
+				continue
+			}
+			defer tag.Close()
+			tag.SetArtist("Car Talk")
+			tag.SetTitle(i.Title)
+		*/
 	}
 }
