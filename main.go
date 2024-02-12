@@ -12,7 +12,6 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
-	//id3 "github.com/bogem/id3v2"
 )
 
 func getAttr(n *html.Node, attr string) string {
@@ -154,9 +153,13 @@ func main() {
 
 	flag.IntVar(&args.Count, "count", 20, "")
 	flag.IntVar(&args.Skip, "skip", 0, "")
-	flag.StringVar(&args.Podcast, "podcast", "510208/car-talk", "")
+	flag.StringVar(&args.Podcast, "podcast", "510208", "")
 
 	flag.Parse()
+
+	if args.Podcast == "wait" {
+		args.Podcast = "344098539"
+	}
 
 	url := "http://www.npr.org"
 
@@ -184,15 +187,19 @@ func main() {
 		fmt.Printf("%s\n", err)
 	}
 
+	fr, err := regexp.Compile("[/<>:\"\\|?*.,]")
+	if err != nil {
+		fmt.Printf("%s\n", err)
+	}
+
 	for _, i := range a {
 		id := strings.TrimPrefix(i.Id, "res")
 		episod := r.FindString(i.Title)
 		i.Title = strings.Replace(i.Title, episod, "", -1)
 		i.Title = strings.Trim(i.Title, ": ")
-		i.Title = strings.Replace(i.Title, "  ", " ", -1)
-		i.Title = strings.Replace(i.Title, " ", "_", -1)
-		i.Title = strings.Replace(i.Title, ",", "", -1)
-		i.Title = strings.Replace(i.Title, ".", "", -1)
+		title := strings.Replace(i.Title, "  ", " ", -1)
+		title = strings.Replace(title, " ", "_", -1)
+		title = fr.ReplaceAllString(title, "")
 
 		if episod != "" {
 			episod = strings.TrimPrefix(episod, "#")
@@ -203,21 +210,8 @@ func main() {
 		fn := i.Date + "-" + episod + "-" + i.Title + ".mp3"
 
 		_, err = os.Stat(fn)
-		if err == nil {
-			continue
+		if err != nil {
+			downloadFile(fn, i.Url)
 		}
-
-		downloadFile(fn, i.Url)
-
-		/*
-			tag, err := id3.Open(fn)
-			if err != nil {
-				fmt.Printf("%s\n", err)
-				continue
-			}
-			defer tag.Close()
-			tag.SetArtist("Car Talk")
-			tag.SetTitle(i.Title)
-		*/
 	}
 }
