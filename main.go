@@ -207,7 +207,7 @@ func main() {
 			episod = id
 		}
 
-		fn := i.Date + "-" + episod + "-" + i.Title + ".mp3"
+		fn := i.Date + "-" + episod + "-" + title + ".mp3"
 
 		_, err = os.Stat(fn)
 		if err != nil {
