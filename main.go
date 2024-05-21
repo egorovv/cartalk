@@ -189,7 +189,7 @@ func main() {
 		fmt.Printf("%s\n", err)
 	}
 
-	fr, err := regexp.Compile("[/<>:\"\\|?*.,!]")
+	fr, err := regexp.Compile("[/<>:\"\\|?*.,!()]")
 	if err != nil {
 		fmt.Printf("%s\n", err)
 	}
