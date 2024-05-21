@@ -149,11 +149,13 @@ func main() {
 		Podcast string
 		Count   int
 		Skip    int
+		DryRun  bool
 	}{}
 
 	flag.IntVar(&args.Count, "count", 20, "")
 	flag.IntVar(&args.Skip, "skip", 0, "")
 	flag.StringVar(&args.Podcast, "podcast", "510208", "")
+	flag.BoolVar(&args.DryRun, "dry-run", false, "dry run")
 
 	flag.Parse()
 
@@ -192,7 +194,7 @@ func main() {
 		fmt.Printf("%s\n", err)
 	}
 
-	for _, i := range a {
+	for idx, i := range a {
 		id := strings.TrimPrefix(i.Id, "res")
 		episod := r.FindString(i.Title)
 		i.Title = strings.Replace(i.Title, episod, "", -1)
@@ -207,11 +209,16 @@ func main() {
 			episod = id
 		}
 
-		fn := i.Date + "-" + episod + "-" + title + ".mp3"
+		no := idx + args.Skip
+		fn := fmt.Sprintf("%03d-", no) + i.Date + "-" + episod + "-" + title + ".mp3"
 
-		_, err = os.Stat(fn)
-		if err != nil {
-			downloadFile(fn, i.Url)
+		if args.DryRun {
+			fmt.Println(fn)
+		} else {
+			_, err = os.Stat(fn)
+			if err != nil {
+				downloadFile(fn, i.Url)
+			}
 		}
 	}
 }
