@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -31,7 +33,17 @@ type Info struct {
 	Id, Title, Url string
 	Teaser         string
 	Date           string
+	Parts          []string
 }
+
+type PartInfo struct {
+	AudioUrl string `json:"audioUrl"`
+}
+
+type EpisodeInfo struct {
+	AudioData []PartInfo `json:"audioData"`
+}
+
 
 func walk(n *html.Node, info *Info) (articles []*Info) {
 	//if info == nil && n.Type == html.ElementNode && n.DataAtom == atom.Article {
@@ -73,6 +85,59 @@ func walk(n *html.Node, info *Info) (articles []*Info) {
 	return
 }
 
+func walk2(n *html.Node, info *Info) (articles []*Info) {
+	//if info == nil && n.Type == html.ElementNode && n.DataAtom == atom.Article {
+	if info == nil && n.Type == html.ElementNode &&
+		n.DataAtom == atom.Article && isClass(n, "program-show has-segments") {
+		info = &Info{}
+		info.Id = getAttr(n, "data-episode-id")
+		info.Date = getAttr(n, "data-episode-date")
+		articles = append(articles, info)
+	} else if info != nil && n.Type == html.ElementNode && n.DataAtom == atom.B {
+		data := getAttr(n, "data-play-all")
+		if data != "" {
+			x := EpisodeInfo{}
+			json.Unmarshal([]byte(data), &x);
+			if len(x.AudioData) > 0 {
+				for _, y := range x.AudioData {
+					info.Parts = append(info.Parts, y.AudioUrl)
+				}
+				return;
+			}
+		}
+	} else if info != nil && n.Type == html.TextNode &&
+		n.Parent.Parent != nil && isClass(n.Parent.Parent, "program-show__title") {
+		info.Title = n.Data
+		return
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		articles = append(articles, walk2(c, info)...)
+	}
+	return
+}
+
+func Articles2(url string) (articles []*Info) {
+	fmt.Printf("%s\n", url)
+	resp, err := http.Get(url)
+
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	doc, err := html.Parse(resp.Body)
+
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return
+	}
+
+	articles = walk2(doc, nil)
+
+	return
+}
+
 func Articles(url string) (articles []*Info) {
 	fmt.Printf("%s\n", url)
 	resp, err := http.Get(url)
@@ -95,6 +160,20 @@ func Articles(url string) (articles []*Info) {
 	return
 }
 
+func mergeArticles(x []*Info, y []*Info) (z []*Info) {
+	z = append(z, x...)
+	out:
+	for _, a := range y {
+		for _, b := range x {
+			if b.Date == a.Date {
+				continue out
+			}
+		}
+		z = append(z, a)
+	}
+	return
+}
+
 type Progress struct {
 	name  string
 	total int64
@@ -109,7 +188,16 @@ func (p *Progress) Read(b []byte) (n int, err error) {
 	return
 }
 
-func downloadFile(filepath string, url string) (err error) {
+func downloadFile(args Args, filepath string, url string) (err error) {
+	if args.DryRun {
+		fmt.Println(filepath)
+		return nil
+	}
+
+	_, err = os.Stat(filepath)
+	if err == nil {
+		return nil
+	}
 
 	// Create the file
 	part := filepath + ".part"
@@ -143,19 +231,23 @@ func downloadFile(filepath string, url string) (err error) {
 	return nil
 }
 
+type Args struct {
+	Podcast string
+	Urls    string
+	Count   int
+	Skip    int
+	DryRun  bool
+}
+
 func main() {
 
-	args := struct {
-		Podcast string
-		Count   int
-		Skip    int
-		DryRun  bool
-	}{}
+	args := Args{}
 
 	flag.IntVar(&args.Count, "count", 20, "")
 	flag.IntVar(&args.Skip, "skip", 0, "")
 	flag.StringVar(&args.Podcast, "podcast", "510208", "")
 	flag.BoolVar(&args.DryRun, "dry-run", false, "dry run")
+	flag.StringVar(&args.Urls, "urls", "", "")
 
 	flag.Parse()
 
@@ -165,31 +257,55 @@ func main() {
 
 	url := "http://www.npr.org"
 
-	pos := args.Skip
 	a := []*Info{}
-	for len(a) < args.Count {
-		suffix := fmt.Sprintf("/get/%s/render/partial/next?start=%d", args.Podcast, pos+1)
-		if pos == 0 {
-			suffix = "/podcasts/" + args.Podcast
+
+	if args.Urls != "" {
+		in, err := os.Open(args.Urls);
+		defer in.Close()
+
+		if err != nil {
+			fmt.Println(err)
+			return;
 		}
-		u := url + suffix
-		x := Articles(u)
-		pos = pos + len(x)
-		if len(x) == 0 {
-			fmt.Printf("out of episodes\n")
-			break
+		scan := bufio.NewScanner(in)
+
+		scan.Split(bufio.ScanLines)
+
+		for scan.Scan() {
+			x := Articles2(scan.Text())
+			a = mergeArticles(a, x)
+			if len(a) > args.Skip + args.Count {
+				break
+			}
 		}
 
-		a = append(a, x...)
+		a = a[args.Skip:args.Skip + args.Count]
+	} else {
+		pos := args.Skip
+		for len(a) < args.Count {
+			suffix := fmt.Sprintf("/get/%s/render/partial/next?start=%d", args.Podcast, pos+1)
+			if pos == 0 {
+				suffix = "/podcasts/" + args.Podcast
+			}
+			u := url + suffix
+			x := Articles(u)
+			pos = pos + len(x)
+			if len(x) == 0 {
+				fmt.Printf("out of episodes\n")
+				break
+			}
+
+			a = append(a, x...)
+		}
+		a = a[0:args.Count]
 	}
 
-	a = a[0:args.Count]
 	r, err := regexp.Compile("#[1234567890]+")
 	if err != nil {
 		fmt.Printf("%s\n", err)
 	}
 
-	fr, err := regexp.Compile("[/<>:\"\\|?*.,!()]")
+	fr, err := regexp.Compile("[/<>:\"\\|?*.,!()']")
 	if err != nil {
 		fmt.Printf("%s\n", err)
 	}
@@ -210,15 +326,15 @@ func main() {
 		}
 
 		no := idx + args.Skip
-		fn := fmt.Sprintf("%03d-", no) + i.Date + "-" + episod + "-" + title + ".mp3"
 
-		if args.DryRun {
-			fmt.Println(fn)
-		} else {
-			_, err = os.Stat(fn)
-			if err != nil {
-				downloadFile(fn, i.Url)
+		if len(i.Parts) > 0 {
+			for idx, part := range i.Parts {
+				fn := fmt.Sprintf("%03d-%s-%s-%s-%d.mp3", no, i.Date, episod, title, idx + 1)
+				downloadFile(args, fn, part)
 			}
+		} else {
+			fn := fmt.Sprintf("%03d-%s-%s-%s.mp3", no, i.Date, episod, title)
+			downloadFile(args, fn, i.Url)
 		}
 	}
 }
